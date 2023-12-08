@@ -1,9 +1,16 @@
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import cv2
 import glob
+import csv
+
+import tkinter as tk
+import tkinter.ttk as ttk
+
+from tkinter import filedialog
 
 from EniPy import colors
 from EniPy import eniUtils
@@ -168,19 +175,18 @@ def getRegionValue(image, mask):
         result.max = np.max(subRegion)
     result.count = np.count_nonzero(mask)
     return result
-def findAverageCircularIntensity():
-    imagesPath = glob.glob('imagesCircle/*.png')
-    output = open("result.txt", "w")
+def findAverageCircularIntensity(targetImageDescriptions, resultFilename = 'result.txt'):
+    output = open(resultFilename, "w")
 
-    for imagePath in imagesPath:
-        print(f'\nProcessed: {imagePath}')
-        output.write(f'{imagePath}\t')
-        image = loadImage(imagePath)
+    for imageDescription in targetImageDescriptions:
+        print(f'\nProcessed: {imageDescription.path}')
+        output.write(f'{imageDescription.value()}\t')
+        image = loadImage(str(imageDescription.path))
         if image is None:
             print(f'image corrupted')
             continue
         imageScale = 2
-        original = getScaledImage(loadImage(imagePath), 640 * imageScale)
+        original = getScaledImage(image, 640 * imageScale)
         result = original.copy()
         gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
 
@@ -211,18 +217,81 @@ def findAverageCircularIntensity():
                 output.write(f'{regionValue.average()}\t')
 
                 cv2.circle(result, centerCircle.intCenter(), radius, colors.Red)
-                cv2.putText(result, f'{int(radius / imageScale)}', (centerCircle.intX() + radius, centerCircle.intY()), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Blue, 1)
-                cv2.putText(result, f'{regionValue.min}:{regionValue.max}', (centerCircle.intX() + radius, centerCircle.intY() + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Blue, 1)
-                cv2.putText(result, f'{int(regionValue.average())}', (centerCircle.intX() + radius, centerCircle.intY() + 40),  cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Blue, 1)
+                cv2.putText(result, f'{int(radius / imageScale)}', (centerCircle.intX() + radius, centerCircle.intY()), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Magenta, 1)
+                cv2.putText(result, f'{regionValue.min}:{regionValue.max}', (centerCircle.intX() + radius, centerCircle.intY() + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Magenta, 1)
+                cv2.putText(result, f'{int(regionValue.average())}', (centerCircle.intX() + radius, centerCircle.intY() + 40),  cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Magenta, 1)
         else:
             print(f'No circle found')
 
-        output.write(f'\n')
-        cv2.imshow('result', result)
-        cv2.waitKey()
 
-    cv2.waitKey()
+
+        cv2.putText(result, f'{imageDescription.value()}', (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, colors.Red, 2)
+        cv2.imshow('result', result)
+        mark = cv2.waitKey() - ord('0')
+        output.write(f'{centerCircle.radius}\t')
+        output.write(f'{mark}\t')
+        output.write(f'\n')
+        print(f'mark = {mark}')
+
     cv2.destroyAllWindows()
+@dataclass
+class TargetImageDescription:
+    path: Path
+    def value(self) -> int:
+        return int(self.path.stem)
+    def __lt__(self, other):
+        return self.value() < other.value()
+def onStartButtonClick():
+    print(f'onClick {fromIndex.get()} {endIndex.get()}')
+    targets = []
+    for description in availableDescriptions:
+        if description.value() >= fromIndex.get() and description.value() < endIndex.get():
+            targets.append(description)
+    print(f'in selected range {len(targets)} values')
+    findAverageCircularIntensity(targets, f'{fromIndex.get()}_{endIndex.get()}.txt')
+
+availableDescriptions = []
+def onPathSelectionClick():
+    global availableDescriptions
+    print(f'onPathSelectionClick')
+    path = tk.filedialog.askdirectory()
+    pathLabel["text"] = path
+    availableDescriptions = []
+    for name in glob.glob(f'{path}/*.png'):
+        availableDescriptions.append(TargetImageDescription(Path(name)))
+
+    availableDescriptions.sort()
+    availableImagesCountLabel["text"] = len(availableDescriptions)
+
+root = tk.Tk()
+root.title("IrLedsChecker")
+root.geometry("320x240")
+
+pathLabel = ttk.Label()
+pathLabel.pack(fill=tk.X)
+
+pathSelectionButton = ttk.Button(root, text="...", command = onPathSelectionClick)
+pathSelectionButton.pack(anchor=tk.N, fill=tk.X)
+
+
+availableImagesCountLabel = ttk.Label()
+availableImagesCountLabel.pack(anchor=tk.N, fill=tk.X)
+
+fromIndex = tk.IntVar()
+endIndex = tk.IntVar()
+
+fromEntry = ttk.Entry(textvariable=fromIndex)
+fromEntry.pack(anchor=tk.N, side = tk.LEFT, padx=6)
+
+toEntry = ttk.Entry(textvariable=endIndex)
+toEntry.pack(anchor=tk.N, side = tk.RIGHT, padx=6)
+
+startButton = ttk.Button(root, text="Start", command=onStartButtonClick)
+startButton.pack(anchor=tk.N)
+
+
+root.mainloop()
 
 if __name__ == '__main__':
-    findAverageCircularIntensity()
+    root.mainloop()
+    #findAverageCircularIntensity()
