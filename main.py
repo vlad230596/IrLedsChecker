@@ -227,6 +227,7 @@ def findAverageCircularIntensity(targetImageDescriptions, resultFilename = 'resu
 
         cv2.putText(result, f'{imageDescription.value()}', (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, colors.Red, 2)
         cv2.imshow('result', result)
+        cv2.imwrite(f'{imageDescription.value()}.processed.png', result)
         mark = cv2.waitKey() - ord('0')
         output.write(f'{centerCircle.radius}\t')
         output.write(f'{mark}\t')
@@ -248,6 +249,7 @@ def onStartButtonClick():
         if description.value() >= fromIndex.get() and description.value() < endIndex.get():
             targets.append(description)
     print(f'in selected range {len(targets)} values')
+    availableImagesCountLabel["text"] += f':{len(targets)}'
     findAverageCircularIntensity(targets, f'{fromIndex.get()}_{endIndex.get()}.txt')
 
 availableDescriptions = []
@@ -261,7 +263,7 @@ def onPathSelectionClick():
         availableDescriptions.append(TargetImageDescription(Path(name)))
 
     availableDescriptions.sort()
-    availableImagesCountLabel["text"] = len(availableDescriptions)
+    availableImagesCountLabel["text"] = f'{len(availableDescriptions)}'
 
 root = tk.Tk()
 root.title("IrLedsChecker")
