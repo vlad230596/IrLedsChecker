@@ -12,6 +12,7 @@ import tkinter.ttk as ttk
 
 from tkinter import filedialog
 
+import EniPy.colors
 from EniPy import colors
 from EniPy import eniUtils
 
@@ -40,6 +41,41 @@ class RegionValue:
             return self.sum / self.count
         return 0
 
+def midpoint(ptA, ptB):
+	return ((ptA[0] + ptB[0]) * 0.5, (ptA[1] + ptB[1]) * 0.5)
+
+def angle(a, b):
+    dot = np.dot(a, b)
+    lenA = cv2.norm(a)
+    lenB = cv2.norm(b)
+    a = math.acos(dot / (lenA * lenB))
+    return a
+def clockAngle(a, b):
+    dot = np.dot(a, b)
+    det = a[0] * b[1] - a[1] * b[0]
+    a = math.atan2(det, dot)
+    if a < 0:
+        a = math.pi + (math.pi + a)
+    return a
+def order_points_old(pts):
+	# initialize a list of coordinates that will be ordered
+	# such that the first entry in the list is the top-left,
+	# the second entry is the top-right, the third is the
+	# bottom-right, and the fourth is the bottom-left
+	rect = np.zeros((4, 2), dtype="float32")
+	# the top-left point will have the smallest sum, whereas
+	# the bottom-right point will have the largest sum
+	s = pts.sum(axis=1)
+	rect[0] = pts[np.argmin(s)]
+	rect[2] = pts[np.argmax(s)]
+	# now, compute the difference between the points, the
+	# top-right point will have the smallest difference,
+	# whereas the bottom-left will have the largest difference
+	diff = np.diff(pts, axis=1)
+	rect[1] = pts[np.argmin(diff)]
+	rect[3] = pts[np.argmax(diff)]
+	# return the ordered coordinates
+	return rect
 def getScaledImage(image, targetWidth = 1920):
     scale = targetWidth / image.shape[1]
     width = int(image.shape[1] * scale)
@@ -56,15 +92,15 @@ def getBlankImage(width, height, color = colors.Black):
     blankImage = np.zeros((height, width, 3), np.uint8)
     blankImage[:] = color
     return blankImage
-def create_collages(images):
+def create_collages(images, scale):
 
     collage_size = int(math.ceil(math.sqrt(len(images))))
 
     collage = None
 
     if len(images) > 0:
-        targetWidth = images[0].shape[1]
-        targetHeight = images[0].shape[0]
+        targetWidth = images[0].shape[1] * scale
+        targetHeight = images[0].shape[0] * scale
 
     for colIndex in range(collage_size):
         row = None
@@ -72,7 +108,30 @@ def create_collages(images):
             i = colIndex * collage_size + rowIndex
             insertFrame = getBlankImage(targetWidth, targetHeight, colors.White)
             if i < len(images):
-                insertFrame = images[i]
+                insertFrame = getScaledImage(images[i], images[i].shape[1] * scale)
+
+                gray = cv2.cvtColor(insertFrame, cv2.COLOR_BGR2GRAY)
+                blur = cv2.GaussianBlur(gray, (7, 7), 0)
+                ret, threshold = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+                contours, hierarchy = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                print(f'found {len(contours)} contours')
+                mean = -1
+                min = -1
+                max = -1
+                mean2 = -1
+                if len(contours) > 0:
+                    mask = np.zeros(gray.shape, np.uint8)
+                    cv2.drawContours(mask, contours[0], -1, 255, -1)
+                    mean = cv2.mean(gray, mask=mask)
+                    regionValue = getRegionValue(gray, mask)
+                    min = regionValue.min
+                    max = regionValue.max
+                    mean2 = regionValue.average()
+
+                cv2.drawContours(insertFrame, contours, -1, colors.Blue, 1)
+                cv2.putText(insertFrame, f'{i} {int(mean[0])} {int(mean2)} [{min};{max}]', (0, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
+
 
             if row is None:
                 row = insertFrame
@@ -86,8 +145,8 @@ def create_collages(images):
 
     return collage
 
-def markersCheck():
-    imagesPath = glob.glob('images/*/All.JPG')
+def markersCheck(path):
+    imagesPath = glob.glob(f'{path}/*.jpg')
     for imagePath in imagesPath:
         print(f'\nProcessed: {imagePath}')
         original = loadImage(imagePath)
@@ -105,10 +164,20 @@ def markersCheck():
 
         cv2.drawContours(result, contours, -1, colors.Blue, 1)
 
+        rect = cv2.minAreaRect(np.vstack(contours))
+        box = cv2.boxPoints(rect)
+        box = order_points_old(box)
+        centerMid = midpoint(box[0], box[2])
+        bottomMid = midpoint(box[2], box[3])
+        cv2.drawContours(result, [np.intp(box)], 0, (0, 0, 255), 2)
+
+        cv2.circle(result, np.intp(centerMid), 5, colors.Cyan)
+        cv2.circle(result, np.intp(bottomMid), 5, colors.Cyan)
+
         zoomRegions = []
         zoomWidth = 25
         zoomHeight = 25
-
+        index = 0
         for cnt in contours:
             (x, y), radius = cv2.minEnclosingCircle(cnt)
             x = int(x)
@@ -131,26 +200,30 @@ def markersCheck():
 
             color = colors.Red
             cv2.circle(result, (x, y), int(radius), color, 1)
-            cv2.putText(result, f'{radius:.2f}', (x, y + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
-        # cv2.imshow('cropCnt', image)
+            baseLine = (bottomMid[0] - centerMid[0], bottomMid[1] - centerMid[1])
+            currentLine = (x - centerMid[0], y - centerMid[1])
+            a = clockAngle(baseLine, currentLine)
+            print(f'a = {math.degrees(a)}')
 
-        collage = create_collages(zoomRegions)
+            cv2.putText(result, f'{index}:{radius:.2f}_{int(math.degrees(a))}', (x, y + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
+            index = index + 1
+
+        collage = create_collages(zoomRegions, 10)
         if (not (collage is None)):
-            cv2.imshow('collage', collage)
-            bigCollage = getScaledImage(collage, collage.shape[1] * 10)
+            #cv2.imshow('collage', collage)
+            bigCollage = getScaledImage(collage, collage.shape[1] * 1)
             cv2.imshow('bigCollage', bigCollage)
-            cv2.imwrite(f'{imagePath.replace("All", "Processed")}', bigCollage)
+            #cv2.imwrite(f'{imagePath.replace(".jpg", ".Processed.jpg")}', bigCollage)
 
         # for zoomRegion in zoomRegions:
         #     cv2.imshow('zoomRegion', zoomRegion)
 
-        cv2.imshow('gray', gray)
-        cv2.imshow('blur', blur)
-        cv2.imshow('threshold', threshold)
+        #cv2.imshow('gray', gray)
+        #cv2.imshow('blur', blur)
+        #cv2.imshow('threshold', threshold)
         cv2.imshow('result', result)
         cv2.waitKey()
 
-    cv2.waitKey()
     cv2.destroyAllWindows()
 def getMaxCircle(contours):
     result = Circle()
@@ -252,6 +325,10 @@ def onStartButtonClick():
     availableImagesCountLabel["text"] += f':{len(targets)}'
     findAverageCircularIntensity(targets, f'{fromIndex.get()}_{endIndex.get()}.txt')
 
+def onStartButtonClickMarkers():
+    print(f'onClick')
+    markersCheck(pathLabelMarkers["text"])
+
 availableDescriptions = []
 def onPathSelectionClick():
     global availableDescriptions
@@ -265,35 +342,55 @@ def onPathSelectionClick():
     availableDescriptions.sort()
     availableImagesCountLabel["text"] = f'{len(availableDescriptions)}'
 
+def onPathSelectionClickMarkers():
+    print(f'onPathSelectionClick')
+    path = tk.filedialog.askdirectory()
+    pathLabelMarkers["text"] = path
+
 root = tk.Tk()
 root.title("IrLedsChecker")
 root.geometry("320x240")
 
-pathLabel = ttk.Label()
+tabControl = ttk.Notebook(root)
+circularIntensityTab = ttk.Frame(tabControl)
+markersCheckTab = ttk.Frame(tabControl)
+
+tabControl.add(circularIntensityTab, text='CircularIntensity')
+tabControl.add(markersCheckTab, text='MarkersCheck')
+
+tabControl.pack(expand=1, fill="both")
+
+pathLabel = ttk.Label(circularIntensityTab)
 pathLabel.pack(fill=tk.X)
 
-pathSelectionButton = ttk.Button(root, text="...", command = onPathSelectionClick)
+pathSelectionButton = ttk.Button(circularIntensityTab, text="...", command = onPathSelectionClick)
 pathSelectionButton.pack(anchor=tk.N, fill=tk.X)
 
 
-availableImagesCountLabel = ttk.Label()
+availableImagesCountLabel = ttk.Label(circularIntensityTab)
 availableImagesCountLabel.pack(anchor=tk.N, fill=tk.X)
 
 fromIndex = tk.IntVar()
 endIndex = tk.IntVar()
 
-fromEntry = ttk.Entry(textvariable=fromIndex)
+fromEntry = ttk.Entry(master=circularIntensityTab, textvariable=fromIndex)
 fromEntry.pack(anchor=tk.N, side = tk.LEFT, padx=6)
 
-toEntry = ttk.Entry(textvariable=endIndex)
+toEntry = ttk.Entry(master=circularIntensityTab, textvariable=endIndex)
 toEntry.pack(anchor=tk.N, side = tk.RIGHT, padx=6)
 
-startButton = ttk.Button(root, text="Start", command=onStartButtonClick)
+startButton = ttk.Button(circularIntensityTab, text="Start", command=onStartButtonClick)
 startButton.pack(anchor=tk.N)
 
 
-root.mainloop()
+pathLabelMarkers = ttk.Label(markersCheckTab, text=f'C:\\Users\\vlad.mokhnachov\\Desktop\\IoIrLeds\\2024.01.10AfterNight')
+pathLabelMarkers.pack(fill=tk.X)
+
+pathSelectionButtonMarkers = ttk.Button(markersCheckTab, text="...", command = onPathSelectionClickMarkers)
+pathSelectionButtonMarkers.pack(anchor=tk.N, fill=tk.X)
+
+startButtonMarkers = ttk.Button(markersCheckTab, text="Start", command=onStartButtonClickMarkers)
+startButtonMarkers.pack(anchor=tk.N)
 
 if __name__ == '__main__':
     root.mainloop()
-    #findAverageCircularIntensity()
