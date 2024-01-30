@@ -2,17 +2,17 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+from os import path
+
 import numpy as np
 import cv2
 import glob
-import csv
 
 import tkinter as tk
 import tkinter.ttk as ttk
 
 from tkinter import filedialog
 
-import EniPy.colors
 from EniPy import colors
 from EniPy import eniUtils
 
@@ -20,7 +20,7 @@ from EniPy import eniUtils
 class Circle:
     x: float = 0.0
     y: float = 0.0
-    radius: float = -0.0
+    radius: float = 0.0
 
     def intX(self) -> int:
         return int(self.x)
@@ -41,6 +41,18 @@ class RegionValue:
             return self.sum / self.count
         return 0
 
+@dataclass
+class Marker:
+    image: None = None
+    angleCw: float = 0.0
+    radius: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    def intX(self) -> int:
+        return int(self.x)
+    def intY(self) -> int:
+        return int(self.y)
+
 def midpoint(ptA, ptB):
 	return ((ptA[0] + ptB[0]) * 0.5, (ptA[1] + ptB[1]) * 0.5)
 
@@ -57,7 +69,7 @@ def clockAngle(a, b):
     if a < 0:
         a = math.pi + (math.pi + a)
     return a
-def order_points_old(pts):
+def orderPoints(pts):
 	# initialize a list of coordinates that will be ordered
 	# such that the first entry in the list is the top-left,
 	# the second entry is the top-right, the third is the
@@ -119,18 +131,16 @@ def create_collages(images, scale):
                 mean = -1
                 min = -1
                 max = -1
-                mean2 = -1
                 if len(contours) > 0:
                     mask = np.zeros(gray.shape, np.uint8)
                     cv2.drawContours(mask, contours[0], -1, 255, -1)
-                    mean = cv2.mean(gray, mask=mask)
                     regionValue = getRegionValue(gray, mask)
                     min = regionValue.min
                     max = regionValue.max
-                    mean2 = regionValue.average()
+                    mean = regionValue.average()
 
                 cv2.drawContours(insertFrame, contours, -1, colors.Blue, 1)
-                cv2.putText(insertFrame, f'{i} {int(mean[0])} {int(mean2)} [{min};{max}]', (0, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
+                cv2.putText(insertFrame, f'{i} {int(mean)} [{min};{max}]', (0, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
 
 
             if row is None:
@@ -166,28 +176,34 @@ def markersCheck(path):
 
         rect = cv2.minAreaRect(np.vstack(contours))
         box = cv2.boxPoints(rect)
-        box = order_points_old(box)
+        box = orderPoints(box)
         centerMid = midpoint(box[0], box[2])
         bottomMid = midpoint(box[2], box[3])
-        cv2.drawContours(result, [np.intp(box)], 0, (0, 0, 255), 2)
+        cv2.drawContours(result, [np.intp(box)], 0, colors.Cyan, 1, lineType=cv2.LINE_AA)
 
         cv2.circle(result, np.intp(centerMid), 5, colors.Cyan)
         cv2.circle(result, np.intp(bottomMid), 5, colors.Cyan)
 
-        zoomRegions = []
         zoomWidth = 25
         zoomHeight = 25
-        index = 0
+        markerList = []
         for cnt in contours:
             (x, y), radius = cv2.minEnclosingCircle(cnt)
-            x = int(x)
-            y = int(y)
+            m = Marker()
+            m.x = x
+            m.y = y
+            m.radius = radius
 
-            startX = x - int(zoomWidth / 2)
-            endX = x + int(zoomWidth / 2)
+            baseLine = (bottomMid[0] - centerMid[0], bottomMid[1] - centerMid[1])
+            currentLine = (x - centerMid[0], y - centerMid[1])
 
-            startY = y - int(zoomHeight / 2)
-            endY = y + int(zoomHeight / 2)
+            m.angleCw = clockAngle(baseLine, currentLine)
+
+            startX = m.intX() - int(zoomWidth / 2)
+            endX = m.intX() + int(zoomWidth / 2)
+
+            startY = m.intY() - int(zoomHeight / 2)
+            endY = m.intY() + int(zoomHeight / 2)
 
             if (startX < 0 or endX > original.shape[1]):
                 continue
@@ -195,28 +211,26 @@ def markersCheck(path):
             if (startY < 0 or endY > original.shape[0]):
                 continue
 
-            region = original[startY:endY, startX:endX]
-            zoomRegions.append(region)
+            m.image = original[startY:endY, startX:endX]
 
-            color = colors.Red
-            cv2.circle(result, (x, y), int(radius), color, 1)
-            baseLine = (bottomMid[0] - centerMid[0], bottomMid[1] - centerMid[1])
-            currentLine = (x - centerMid[0], y - centerMid[1])
-            a = clockAngle(baseLine, currentLine)
-            print(f'a = {math.degrees(a)}')
+            markerList.append(m)
 
-            cv2.putText(result, f'{index}:{radius:.2f}_{int(math.degrees(a))}', (x, y + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
-            index = index + 1
+        markerList.sort(key=lambda x: x.angleCw)
 
-        collage = create_collages(zoomRegions, 10)
+        markesImages = []
+        for i, marker in enumerate(markerList):
+            print(f'{i} {marker.radius}')
+            cv2.circle(result, (marker.intX(), marker.intY()), int(radius), colors.Red, 1)
+            cv2.putText(result, f'{i}:{radius:.2f}', (marker.intX(), marker.intY() + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors.Red, 1)
+            markesImages.append(marker.image)
+
+
+        collage = create_collages(markesImages, 10)
         if (not (collage is None)):
             #cv2.imshow('collage', collage)
             bigCollage = getScaledImage(collage, collage.shape[1] * 1)
             cv2.imshow('bigCollage', bigCollage)
             #cv2.imwrite(f'{imagePath.replace(".jpg", ".Processed.jpg")}', bigCollage)
-
-        # for zoomRegion in zoomRegions:
-        #     cv2.imshow('zoomRegion', zoomRegion)
 
         #cv2.imshow('gray', gray)
         #cv2.imshow('blur', blur)
@@ -383,7 +397,7 @@ startButton = ttk.Button(circularIntensityTab, text="Start", command=onStartButt
 startButton.pack(anchor=tk.N)
 
 
-pathLabelMarkers = ttk.Label(markersCheckTab, text=f'C:\\Users\\vlad.mokhnachov\\Desktop\\IoIrLeds\\2024.01.10AfterNight')
+pathLabelMarkers = ttk.Label(markersCheckTab, text=path.expandvars(r'%USERPROFILE%/Desktop/IoIrLeds/2024.01.10AfterNight'))
 pathLabelMarkers.pack(fill=tk.X)
 
 pathSelectionButtonMarkers = ttk.Button(markersCheckTab, text="...", command = onPathSelectionClickMarkers)
