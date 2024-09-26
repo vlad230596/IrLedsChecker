@@ -333,7 +333,7 @@ def onStartButtonClick():
     print(f'onClick {fromIndex.get()} {endIndex.get()}')
     targets = []
     for description in availableDescriptions:
-        if description.value() >= fromIndex.get() and description.value() < endIndex.get():
+        if (description.value() >= fromIndex.get() and description.value() < endIndex.get()) or (fromIndex.get() == 0 and endIndex.get() == 0):
             targets.append(description)
     print(f'in selected range {len(targets)} values')
     availableImagesCountLabel["text"] += f':{len(targets)}'
